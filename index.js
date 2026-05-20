@@ -1,35 +1,38 @@
 const express = require("express");
 const cors = require("cors");
-require("dotenv").config();
 const dns = require("dns");
+require("dotenv").config();
 
 const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
 const { betterAuth } = require("better-auth");
 const { mongodbAdapter } = require("better-auth/adapters/mongodb");
 const { toNodeHandler } = require("better-auth/node");
 
-// DNS Fix
+// DNS Fix for some ISPs
 dns.setServers(["8.8.8.8", "8.8.4.4"]);
 
 const app = express();
 const port = process.env.PORT || 5000;
 
-// CORS
+// CORS Setup
 app.use(
   cors({
-    origin: "http://localhost:3000",
+    origin: ["http://localhost:3000", process.env.CLIENT_URL], 
     methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     credentials: true,
   })
 );
 app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 
+// Database variables
 const uri = process.env.MONGO_URI;
 if (!uri) {
-  console.log("❌ MONGO_URI not found in .env");
+  console.error("❌ FATAL ERROR: MONGO_URI is missing.");
   process.exit(1);
 }
 
+// Global MongoDB Client
 const client = new MongoClient(uri, {
   serverApi: {
     version: ServerApiVersion.v1,
@@ -42,16 +45,33 @@ const database = client.db("tutorsFinderDB");
 const tutorsCollection = database.collection("tutors");
 const bookingsCollection = database.collection("bookings");
 
+// 🚀 Better Auth Setup (With Secret for Production)
 const auth = betterAuth({
   database: mongodbAdapter(database, { client }),
-  emailAndPassword: { enabled: true },
-  trustedOrigins: ["http://localhost:3000"],
-  baseURL: `http://localhost:${port}`, 
+  secret: process.env.BETTER_AUTH_SECRET || "fallback_secret_for_local_123", // Vercel-এ এটা মাস্ট লাগবে
+  emailAndPassword: { 
+    enabled: true 
+  },
+  socialProviders: {
+    google: {
+      clientId: process.env.GOOGLE_CLIENT_ID || "MISSING_CLIENT_ID",
+      clientSecret: process.env.GOOGLE_CLIENT_SECRET || "MISSING_CLIENT_SECRET",
+    },
+  },
+  trustedOrigins: ["http://localhost:3000", process.env.CLIENT_URL], 
+  baseURL: process.env.BETTER_AUTH_URL || `http://localhost:${port}`, 
 });
 
-app.use("/api/auth", toNodeHandler(auth));
+// Connect DB (Non-blocking for Vercel)
+client.connect()
+  .then(() => console.log("✅ Connected to MongoDB"))
+  .catch(err => console.error("❌ MongoDB Connection Error:", err));
 
-app.get("/", (req, res) => res.send("🚀 Tutors Finder Server Running"));
+// 🛑 THE ULTIMATE FIX FOR EXPRESS 5 & VERCEL ROUTING:
+app.all(/^\/api\/auth/, toNodeHandler(auth));
+
+// Base Route
+app.get("/", (req, res) => res.send("🚀 Tutors Finder Server Running Perfectly on Vercel!"));
 
 // --- TUTORS ROUTES ---
 app.get("/api/tutors", async (req, res) => {
@@ -86,7 +106,10 @@ app.post("/api/tutors", async (req, res) => {
 
 app.put("/api/tutors/:id", async (req, res) => {
   try {
-    const result = await tutorsCollection.updateOne({ _id: new ObjectId(req.params.id) }, { $set: { ...req.body } });
+    const result = await tutorsCollection.updateOne(
+      { _id: new ObjectId(req.params.id) }, 
+      { $set: { ...req.body } }
+    );
     res.json(result);
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -102,39 +125,17 @@ app.delete("/api/tutors/:id", async (req, res) => {
   }
 });
 
-
-
-
-
-
-// 🚀 GET MY TUTORS (Specific User)
+// 🚀 GET MY TUTORS (By Email)
 app.get("/api/my-tutors/:email", async (req, res) => {
   try {
-    // Decode URI to safely handle @ and spaces
     const email = decodeURIComponent(req.params.email).trim().toLowerCase();
-    
-    // Find tutors where the email matches the logged-in user's email
     const query = { email: { $regex: `^${email}$`, $options: "i" } };
     const result = await tutorsCollection.find(query).sort({ _id: -1 }).toArray();
-    
     res.json(result);
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
 });
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 // --- BOOKINGS ROUTES ---
 app.post("/api/bookings", async (req, res) => {
@@ -155,16 +156,11 @@ app.post("/api/bookings", async (req, res) => {
   }
 });
 
-// 🚀 GET SESSIONS (URL Email Fix)
 app.get("/api/booked-sessions/:email", async (req, res) => {
   try {
-    // Decode URI to safely handle @ and spaces
     const email = decodeURIComponent(req.params.email).trim().toLowerCase();
-    
-    // Case-insensitive exact match
     const query = { email: { $regex: `^${email}$`, $options: "i" } };
     const result = await bookingsCollection.find(query).sort({ bookedAt: -1 }).toArray();
-    
     res.json(result);
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -189,15 +185,10 @@ app.delete("/api/bookings/:id", async (req, res) => {
   }
 });
 
-// Connect DB
-async function connectDB() {
-  try {
-    await client.connect();
-    console.log("✅ Connected to MongoDB");
-    app.listen(port, () => console.log(`🚀 Server running on port ${port}`));
-  } catch (error) {
-    console.error("❌ MongoDB Connection Failed", error);
-    process.exit(1);
-  }
+// Export for Vercel Serverless Functions
+module.exports = app;
+
+// Local Development
+if (process.env.NODE_ENV !== "production") {
+  app.listen(port, () => console.log(`🚀 Server running on port ${port}`));
 }
-connectDB();
