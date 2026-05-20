@@ -24,7 +24,16 @@ app.use(express.json());
 app.get("/", (req, res) => {
   res.send("Server is running successfully 🚀");
 });
-
+// --- TUTORS ROUTES ---
+app.get("/api/tutors", async (req, res) => {
+  try {
+    const limit = parseInt(req.query.limit) || 4;
+    const result = await tutorsCollection.find({}).limit(limit).toArray();
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
 // Start Server
 app.listen(port, () => {
   console.log(`🚀 Server running on port ${port}`);
