@@ -8,8 +8,12 @@ const { betterAuth } = require("better-auth");
 const { mongodbAdapter } = require("better-auth/adapters/mongodb");
 const { toNodeHandler } = require("better-auth/node");
 
-// DNS Fix for some ISPs
-dns.setServers(["8.8.8.8", "8.8.4.4"]);
+// DNS Fix
+try {
+  dns.setServers(["8.8.8.8", "8.8.4.4"]);
+} catch (error) {
+  console.error("⚠️ DNS configuration warning:", error.message);
+}
 
 const app = express();
 const port = process.env.PORT || 5000;
@@ -17,15 +21,14 @@ const port = process.env.PORT || 5000;
 // CORS Setup
 app.use(
   cors({
-    origin: ["http://localhost:3000", process.env.CLIENT_URL], 
-    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    origin: ["http://localhost:3000", process.env.CLIENT_URL].filter(Boolean),
+    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
     credentials: true,
   })
 );
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Database variables
 const uri = process.env.MONGO_URI;
 if (!uri) {
   console.error("❌ FATAL ERROR: MONGO_URI is missing.");
@@ -45,53 +48,76 @@ const database = client.db("tutorsFinderDB");
 const tutorsCollection = database.collection("tutors");
 const bookingsCollection = database.collection("bookings");
 
-// 🚀 Better Auth Setup (With Secret for Production)
+// 🚀 Database Connection Middleware (Vercel Serverless Safe)
+let isConnected = false;
+app.use(async (req, res, next) => {
+  if (!isConnected) {
+    try {
+      await client.connect();
+      isConnected = true;
+      console.log("✅ Connected to MongoDB");
+    } catch (err) {
+      console.error("❌ MongoDB Connection Error:", err);
+      return res.status(500).json({ error: "Database connection failed" });
+    }
+  }
+  next();
+});
+
+// 🚀 Better Auth Base URL Dynamic Generator
+const determineBaseURL = () => {
+  if (process.env.BETTER_AUTH_URL) return process.env.BETTER_AUTH_URL;
+  if (process.env.VERCEL_URL) return `https://${process.env.VERCEL_URL}`;
+  return `http://localhost:${port}`;
+};
+
+// 🚀 Better Auth Configuration
 const auth = betterAuth({
   database: mongodbAdapter(database, { client }),
-  secret: process.env.BETTER_AUTH_SECRET || "fallback_secret_for_local_123", // Vercel-এ এটা মাস্ট লাগবে
-  emailAndPassword: { 
-    enabled: true 
+  secret: process.env.BETTER_AUTH_SECRET || "fallback_secret_must_be_32_chars_long_for_security",
+  emailAndPassword: {
+    enabled: true,
   },
   socialProviders: {
     google: {
-      clientId: process.env.GOOGLE_CLIENT_ID || "MISSING_CLIENT_ID",
-      clientSecret: process.env.GOOGLE_CLIENT_SECRET || "MISSING_CLIENT_SECRET",
+      clientId: process.env.GOOGLE_CLIENT_ID || "MISSING",
+      clientSecret: process.env.GOOGLE_CLIENT_SECRET || "MISSING",
     },
   },
-  trustedOrigins: ["http://localhost:3000", process.env.CLIENT_URL], 
-  baseURL: process.env.BETTER_AUTH_URL || `http://localhost:${port}`, 
+  trustedOrigins: ["http://localhost:3000", process.env.CLIENT_URL].filter(Boolean),
+  baseURL: determineBaseURL(),
 });
 
-// Connect DB (Non-blocking for Vercel)
-client.connect()
-  .then(() => console.log("✅ Connected to MongoDB"))
-  .catch(err => console.error("❌ MongoDB Connection Error:", err));
-
-// 🛑 THE ULTIMATE FIX FOR EXPRESS 5 & VERCEL ROUTING:
-app.all(/^\/api\/auth/, toNodeHandler(auth));
+// 🛑 THE FIX: Express 5 compatible Regex for Auth Routes
+app.all(/^\/api\/auth(\/.*)?$/, toNodeHandler(auth));
 
 // Base Route
-app.get("/", (req, res) => res.send("🚀 Tutors Finder Server Running Perfectly on Vercel!"));
+app.get("/", (req, res) =>
+  res.send("🚀 Tutors Finder Server Running Perfectly on Vercel!")
+);
 
+// ========================
 // --- TUTORS ROUTES ---
+// ========================
+
 app.get("/api/tutors", async (req, res) => {
   try {
     const limit = parseInt(req.query.limit) || 4;
     const result = await tutorsCollection.find({}).limit(limit).toArray();
     res.json(result);
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: "Failed to fetch tutors: " + error.message });
   }
 });
 
 app.get("/api/tutors/:id", async (req, res) => {
   try {
-    if (!ObjectId.isValid(req.params.id)) return res.status(400).json({ error: "Invalid ID" });
+    if (!ObjectId.isValid(req.params.id)) return res.status(400).json({ error: "Invalid ID format" });
     const result = await tutorsCollection.findOne({ _id: new ObjectId(req.params.id) });
-    if (!result) return res.status(404).json({ error: "Not found" });
+    if (!result) return res.status(404).json({ error: "Tutor not found" });
     res.json(result);
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: "Failed to fetch tutor: " + error.message });
   }
 });
 
@@ -100,44 +126,51 @@ app.post("/api/tutors", async (req, res) => {
     const result = await tutorsCollection.insertOne(req.body);
     res.status(201).json(result);
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: "Failed to add tutor: " + error.message });
   }
 });
 
 app.put("/api/tutors/:id", async (req, res) => {
   try {
+    if (!ObjectId.isValid(req.params.id)) return res.status(400).json({ error: "Invalid ID format" });
+    
+    const updateData = { ...req.body };
+    delete updateData._id; // MongoDB security fix: Prevent immutable _id error
+
     const result = await tutorsCollection.updateOne(
-      { _id: new ObjectId(req.params.id) }, 
-      { $set: { ...req.body } }
+      { _id: new ObjectId(req.params.id) },
+      { $set: updateData }
     );
     res.json(result);
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: "Failed to update tutor: " + error.message });
   }
 });
 
 app.delete("/api/tutors/:id", async (req, res) => {
   try {
+    if (!ObjectId.isValid(req.params.id)) return res.status(400).json({ error: "Invalid ID format" });
     const result = await tutorsCollection.deleteOne({ _id: new ObjectId(req.params.id) });
     res.json(result);
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: "Failed to delete tutor: " + error.message });
   }
 });
 
-// 🚀 GET MY TUTORS (By Email)
 app.get("/api/my-tutors/:email", async (req, res) => {
   try {
     const email = decodeURIComponent(req.params.email).trim().toLowerCase();
-    const query = { email: { $regex: `^${email}$`, $options: "i" } };
-    const result = await tutorsCollection.find(query).sort({ _id: -1 }).toArray();
+    const result = await tutorsCollection.find({ email: { $regex: `^${email}$`, $options: "i" } }).sort({ _id: -1 }).toArray();
     res.json(result);
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: "Failed to fetch your tutors: " + error.message });
   }
 });
 
+// ========================
 // --- BOOKINGS ROUTES ---
+// ========================
+
 app.post("/api/bookings", async (req, res) => {
   try {
     const booking = req.body;
@@ -147,48 +180,50 @@ app.post("/api/bookings", async (req, res) => {
     const bookingData = {
       ...booking,
       bookedAt: new Date().toISOString(),
-      status: "pending", 
+      status: "pending",
     };
     const result = await bookingsCollection.insertOne(bookingData);
     res.status(201).json({ message: "Success", bookingId: result.insertedId });
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: "Failed to create booking: " + error.message });
   }
 });
 
 app.get("/api/booked-sessions/:email", async (req, res) => {
   try {
     const email = decodeURIComponent(req.params.email).trim().toLowerCase();
-    const query = { email: { $regex: `^${email}$`, $options: "i" } };
-    const result = await bookingsCollection.find(query).sort({ bookedAt: -1 }).toArray();
+    const result = await bookingsCollection.find({ email: { $regex: `^${email}$`, $options: "i" } }).sort({ bookedAt: -1 }).toArray();
     res.json(result);
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: "Failed to fetch bookings: " + error.message });
   }
 });
 
 app.get("/api/bookings/:id", async (req, res) => {
   try {
+    if (!ObjectId.isValid(req.params.id)) return res.status(400).json({ error: "Invalid ID format" });
     const result = await bookingsCollection.findOne({ _id: new ObjectId(req.params.id) });
+    if (!result) return res.status(404).json({ error: "Booking not found" });
     res.json(result);
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: "Failed to fetch booking: " + error.message });
   }
 });
 
 app.delete("/api/bookings/:id", async (req, res) => {
   try {
+    if (!ObjectId.isValid(req.params.id)) return res.status(400).json({ error: "Invalid ID format" });
     const result = await bookingsCollection.deleteOne({ _id: new ObjectId(req.params.id) });
     res.json(result);
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: "Failed to delete booking: " + error.message });
   }
 });
 
-// Export for Vercel Serverless Functions
+// Export for Vercel Serverless
 module.exports = app;
 
-// Local Development
+// Run Local Server
 if (process.env.NODE_ENV !== "production") {
   app.listen(port, () => console.log(`🚀 Server running on port ${port}`));
 }
