@@ -2,13 +2,9 @@ const express = require("express");
 const cors = require("cors");
 const dns = require("dns");
 require("dotenv").config();
-
 const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
-// const { betterAuth } = require("better-auth");
-// const { mongodbAdapter } = require("better-auth/adapters/mongodb");
-// const { toNodeHandler } = require("better-auth/node");
 
-// DNS Fix (Optional, useful if your ISP blocks MongoDB connections)
+// DNS Fix for specific ISPs blocking MongoDB Atlas
 try {
   dns.setServers(["8.8.8.8", "8.8.4.4"]);
 } catch (error) {
@@ -18,24 +14,31 @@ try {
 const app = express();
 const port = process.env.PORT || 5000;
 
-// CORS Setup
+// CORS Setup (Handles local dev and production deployment seamlessly)
+const allowedOrigins = [
+  "http://localhost:3000",
+  "http://localhost:3001",
+  process.env.CLIENT_URL
+].filter(Boolean);
+
 app.use(
   cors({
-    origin: ["http://localhost:3000", process.env.CLIENT_URL].filter(Boolean),
+    origin: allowedOrigins,
     methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
     credentials: true,
   })
 );
+
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-const uri = process.env.MONGO_URI;
+const uri = process.env.MONGO_URI || process.env.MONGODB_URI; // Handles both naming conventions
 if (!uri) {
-  console.error("❌ FATAL ERROR: MONGO_URI is missing from .env file.");
+  console.error("❌ FATAL ERROR: MongoDB connection URI is missing from .env file.");
   process.exit(1);
 }
 
-// Global MongoDB Client
+// Global MongoDB Client Configuration
 const client = new MongoClient(uri, {
   serverApi: {
     version: ServerApiVersion.v1,
@@ -50,46 +53,56 @@ const bookingsCollection = database.collection("bookings");
 
 // 🚀 Database Connection Middleware (Vercel Serverless Safe)
 let isConnected = false;
-app.use(async (req, res, next) => {
-  if (!isConnected) {
-    try {
-      // await client.connect();
-      isConnected = true;
-      console.log("✅ Connected to MongoDB");
-    } catch (err) {
-      console.error("❌ MongoDB Connection Error:", err);
-      return res.status(500).json({ error: "Database connection failed" });
-    }
+async function connectToDatabase() {
+  if (isConnected) return;
+  try {
+    await client.connect(); // ✨ FIXED: This was commented out in your original code
+    isConnected = true;
+    console.log("✅ Connected perfectly to MongoDB");
+  } catch (err) {
+    console.error("❌ MongoDB Connection Error:", err);
+    throw err;
   }
-  next();
+}
+
+app.use(async (req, res, next) => {
+  try {
+    await connectToDatabase();
+    next();
+  } catch (err) {
+    res.status(500).json({ error: "Database connection failed", details: err.message });
+  }
 });
 
-// ==========================================
-// --- BETTER AUTH SETUP (Currently Commented) ---
-// ==========================================
+// ===================================================
+// --- BETTER AUTH SETUP (Uncomment when ready) ---
+// ===================================================
+// const { betterAuth } = require("better-auth");
+// const { mongodbAdapter } = require("better-auth/adapters/mongodb");
+// const { toNodeHandler } = require("better-auth/node");
+//
 // const determineBaseURL = () => process.env.SERVER_URL || `http://localhost:${port}`;
 //
 // const auth = betterAuth({
 //   database: mongodbAdapter(database, { client }),
-//   secret: process.env.BETTER_AUTH_SECRET || "fallback_secret_must_be_32_chars_long_for_security",
+//   secret: process.env.BETTER_AUTH_SECRET,
 //   emailAndPassword: { enabled: true },
 //   socialProviders: {
 //     google: {
-//       clientId: process.env.GOOGLE_CLIENT_ID || "MISSING",
-//       clientSecret: process.env.GOOGLE_CLIENT_SECRET || "MISSING",
+//       clientId: process.env.GOOGLE_CLIENT_ID,
+//       clientSecret: process.env.GOOGLE_CLIENT_SECRET,
 //     },
 //   },
-//   trustedOrigins: ["http://localhost:3000", process.env.CLIENT_URL].filter(Boolean),
+//   trustedOrigins: allowedOrigins,
 //   baseURL: determineBaseURL(),
 // });
 //
-// // Express 5 compatible Regex for Auth Routes
 // app.all(/^\/api\/auth(\/.*)?$/, toNodeHandler(auth));
-// ==========================================
+// ===================================================
 
-// Base Route (Health Check)
+// Health Check Route
 app.get("/", (req, res) => {
-  res.send("🚀 Tutors Finder Server Running Perfectly on Vercel!");
+  res.send("🚀 Tutors Finder Server Running Perfectly!");
 });
 
 // ========================
@@ -98,7 +111,7 @@ app.get("/", (req, res) => {
 
 app.get("/api/tutors", async (req, res) => {
   try {
-    const limit = parseInt(req.query.limit) || 0; // 0 means no limit if query isn't provided (or set to 4 if you prefer)
+    const limit = parseInt(req.query.limit) || 0;
     const result = await tutorsCollection.find({}).limit(limit).toArray();
     res.json(result);
   } catch (error) {
@@ -135,7 +148,7 @@ app.put("/api/tutors/:id", async (req, res) => {
     }
     
     const updateData = { ...req.body };
-    delete updateData._id; // MongoDB security fix: Prevent immutable _id error
+    delete updateData._id; // Prevent immutable _id error
 
     const result = await tutorsCollection.updateOne(
       { _id: new ObjectId(req.params.id) },
@@ -162,7 +175,10 @@ app.delete("/api/tutors/:id", async (req, res) => {
 app.get("/api/my-tutors/:email", async (req, res) => {
   try {
     const email = decodeURIComponent(req.params.email).trim().toLowerCase();
-    const result = await tutorsCollection.find({ email: { $regex: `^${email}$`, $options: "i" } }).sort({ _id: -1 }).toArray();
+    const result = await tutorsCollection
+      .find({ email: { $regex: `^${email}$`, $options: "i" } })
+      .sort({ _id: -1 })
+      .toArray();
     res.json(result);
   } catch (error) {
     res.status(500).json({ error: "Failed to fetch your tutors", details: error.message });
@@ -194,7 +210,10 @@ app.post("/api/bookings", async (req, res) => {
 app.get("/api/booked-sessions/:email", async (req, res) => {
   try {
     const email = decodeURIComponent(req.params.email).trim().toLowerCase();
-    const result = await bookingsCollection.find({ email: { $regex: `^${email}$`, $options: "i" } }).sort({ bookedAt: -1 }).toArray();
+    const result = await bookingsCollection
+      .find({ email: { $regex: `^${email}$`, $options: "i" } })
+      .sort({ bookedAt: -1 })
+      .toArray();
     res.json(result);
   } catch (error) {
     res.status(500).json({ error: "Failed to fetch bookings", details: error.message });
@@ -229,7 +248,7 @@ app.delete("/api/bookings/:id", async (req, res) => {
 // Export for Vercel Serverless
 module.exports = app;
 
-// Run Local Server
+// Run Local Server (Only if not in production/Vercel serverless environment)
 if (process.env.NODE_ENV !== "production") {
-  app.listen(port, () => console.log(`🚀 Server running on port ${port}`));
+  app.listen(port, () => console.log(`🚀 Server running locally on port ${port}`));
 }
