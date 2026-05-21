@@ -4,11 +4,11 @@ const dns = require("dns");
 require("dotenv").config();
 
 const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
-const { betterAuth } = require("better-auth");
-const { mongodbAdapter } = require("better-auth/adapters/mongodb");
-const { toNodeHandler } = require("better-auth/node");
+// const { betterAuth } = require("better-auth");
+// const { mongodbAdapter } = require("better-auth/adapters/mongodb");
+// const { toNodeHandler } = require("better-auth/node");
 
-// DNS Fix
+// DNS Fix (Optional, useful if your ISP blocks MongoDB connections)
 try {
   dns.setServers(["8.8.8.8", "8.8.4.4"]);
 } catch (error) {
@@ -31,7 +31,7 @@ app.use(express.urlencoded({ extended: true }));
 
 const uri = process.env.MONGO_URI;
 if (!uri) {
-  console.error("❌ FATAL ERROR: MONGO_URI is missing.");
+  console.error("❌ FATAL ERROR: MONGO_URI is missing from .env file.");
   process.exit(1);
 }
 
@@ -64,37 +64,33 @@ app.use(async (req, res, next) => {
   next();
 });
 
-// 🚀 Better Auth Base URL Dynamic Generator
-const determineBaseURL = () => {
-  if (process.env.BETTER_AUTH_URL) return process.env.BETTER_AUTH_URL;
-  if (process.env.VERCEL_URL) return `https://${process.env.VERCEL_URL}`;
-  return `http://localhost:${port}`;
-};
+// ==========================================
+// --- BETTER AUTH SETUP (Currently Commented) ---
+// ==========================================
+// const determineBaseURL = () => process.env.SERVER_URL || `http://localhost:${port}`;
+//
+// const auth = betterAuth({
+//   database: mongodbAdapter(database, { client }),
+//   secret: process.env.BETTER_AUTH_SECRET || "fallback_secret_must_be_32_chars_long_for_security",
+//   emailAndPassword: { enabled: true },
+//   socialProviders: {
+//     google: {
+//       clientId: process.env.GOOGLE_CLIENT_ID || "MISSING",
+//       clientSecret: process.env.GOOGLE_CLIENT_SECRET || "MISSING",
+//     },
+//   },
+//   trustedOrigins: ["http://localhost:3000", process.env.CLIENT_URL].filter(Boolean),
+//   baseURL: determineBaseURL(),
+// });
+//
+// // Express 5 compatible Regex for Auth Routes
+// app.all(/^\/api\/auth(\/.*)?$/, toNodeHandler(auth));
+// ==========================================
 
-// 🚀 Better Auth Configuration
-const auth = betterAuth({
-  database: mongodbAdapter(database, { client }),
-  secret: process.env.BETTER_AUTH_SECRET || "fallback_secret_must_be_32_chars_long_for_security",
-  emailAndPassword: {
-    enabled: true,
-  },
-  socialProviders: {
-    google: {
-      clientId: process.env.GOOGLE_CLIENT_ID || "MISSING",
-      clientSecret: process.env.GOOGLE_CLIENT_SECRET || "MISSING",
-    },
-  },
-  trustedOrigins: ["http://localhost:3000", process.env.CLIENT_URL].filter(Boolean),
-  baseURL: determineBaseURL(),
+// Base Route (Health Check)
+app.get("/", (req, res) => {
+  res.send("🚀 Tutors Finder Server Running Perfectly on Vercel!");
 });
-
-// 🛑 THE FIX: Express 5 compatible Regex for Auth Routes
-app.all(/^\/api\/auth(\/.*)?$/, toNodeHandler(auth));
-
-// Base Route
-app.get("/", (req, res) =>
-  res.send("🚀 Tutors Finder Server Running Perfectly on Vercel!")
-);
 
 // ========================
 // --- TUTORS ROUTES ---
@@ -102,22 +98,24 @@ app.get("/", (req, res) =>
 
 app.get("/api/tutors", async (req, res) => {
   try {
-    const limit = parseInt(req.query.limit) || 4;
+    const limit = parseInt(req.query.limit) || 0; // 0 means no limit if query isn't provided (or set to 4 if you prefer)
     const result = await tutorsCollection.find({}).limit(limit).toArray();
     res.json(result);
   } catch (error) {
-    res.status(500).json({ error: "Failed to fetch tutors: " + error.message });
+    res.status(500).json({ error: "Failed to fetch tutors", details: error.message });
   }
 });
 
 app.get("/api/tutors/:id", async (req, res) => {
   try {
-    if (!ObjectId.isValid(req.params.id)) return res.status(400).json({ error: "Invalid ID format" });
+    if (!ObjectId.isValid(req.params.id)) {
+      return res.status(400).json({ error: "Invalid ID format" });
+    }
     const result = await tutorsCollection.findOne({ _id: new ObjectId(req.params.id) });
     if (!result) return res.status(404).json({ error: "Tutor not found" });
     res.json(result);
   } catch (error) {
-    res.status(500).json({ error: "Failed to fetch tutor: " + error.message });
+    res.status(500).json({ error: "Failed to fetch tutor", details: error.message });
   }
 });
 
@@ -126,13 +124,15 @@ app.post("/api/tutors", async (req, res) => {
     const result = await tutorsCollection.insertOne(req.body);
     res.status(201).json(result);
   } catch (error) {
-    res.status(500).json({ error: "Failed to add tutor: " + error.message });
+    res.status(500).json({ error: "Failed to add tutor", details: error.message });
   }
 });
 
 app.put("/api/tutors/:id", async (req, res) => {
   try {
-    if (!ObjectId.isValid(req.params.id)) return res.status(400).json({ error: "Invalid ID format" });
+    if (!ObjectId.isValid(req.params.id)) {
+      return res.status(400).json({ error: "Invalid ID format" });
+    }
     
     const updateData = { ...req.body };
     delete updateData._id; // MongoDB security fix: Prevent immutable _id error
@@ -143,17 +143,19 @@ app.put("/api/tutors/:id", async (req, res) => {
     );
     res.json(result);
   } catch (error) {
-    res.status(500).json({ error: "Failed to update tutor: " + error.message });
+    res.status(500).json({ error: "Failed to update tutor", details: error.message });
   }
 });
 
 app.delete("/api/tutors/:id", async (req, res) => {
   try {
-    if (!ObjectId.isValid(req.params.id)) return res.status(400).json({ error: "Invalid ID format" });
+    if (!ObjectId.isValid(req.params.id)) {
+      return res.status(400).json({ error: "Invalid ID format" });
+    }
     const result = await tutorsCollection.deleteOne({ _id: new ObjectId(req.params.id) });
     res.json(result);
   } catch (error) {
-    res.status(500).json({ error: "Failed to delete tutor: " + error.message });
+    res.status(500).json({ error: "Failed to delete tutor", details: error.message });
   }
 });
 
@@ -163,7 +165,7 @@ app.get("/api/my-tutors/:email", async (req, res) => {
     const result = await tutorsCollection.find({ email: { $regex: `^${email}$`, $options: "i" } }).sort({ _id: -1 }).toArray();
     res.json(result);
   } catch (error) {
-    res.status(500).json({ error: "Failed to fetch your tutors: " + error.message });
+    res.status(500).json({ error: "Failed to fetch your tutors", details: error.message });
   }
 });
 
@@ -185,7 +187,7 @@ app.post("/api/bookings", async (req, res) => {
     const result = await bookingsCollection.insertOne(bookingData);
     res.status(201).json({ message: "Success", bookingId: result.insertedId });
   } catch (error) {
-    res.status(500).json({ error: "Failed to create booking: " + error.message });
+    res.status(500).json({ error: "Failed to create booking", details: error.message });
   }
 });
 
@@ -195,28 +197,32 @@ app.get("/api/booked-sessions/:email", async (req, res) => {
     const result = await bookingsCollection.find({ email: { $regex: `^${email}$`, $options: "i" } }).sort({ bookedAt: -1 }).toArray();
     res.json(result);
   } catch (error) {
-    res.status(500).json({ error: "Failed to fetch bookings: " + error.message });
+    res.status(500).json({ error: "Failed to fetch bookings", details: error.message });
   }
 });
 
 app.get("/api/bookings/:id", async (req, res) => {
   try {
-    if (!ObjectId.isValid(req.params.id)) return res.status(400).json({ error: "Invalid ID format" });
+    if (!ObjectId.isValid(req.params.id)) {
+      return res.status(400).json({ error: "Invalid ID format" });
+    }
     const result = await bookingsCollection.findOne({ _id: new ObjectId(req.params.id) });
     if (!result) return res.status(404).json({ error: "Booking not found" });
     res.json(result);
   } catch (error) {
-    res.status(500).json({ error: "Failed to fetch booking: " + error.message });
+    res.status(500).json({ error: "Failed to fetch booking", details: error.message });
   }
 });
 
 app.delete("/api/bookings/:id", async (req, res) => {
   try {
-    if (!ObjectId.isValid(req.params.id)) return res.status(400).json({ error: "Invalid ID format" });
+    if (!ObjectId.isValid(req.params.id)) {
+      return res.status(400).json({ error: "Invalid ID format" });
+    }
     const result = await bookingsCollection.deleteOne({ _id: new ObjectId(req.params.id) });
     res.json(result);
   } catch (error) {
-    res.status(500).json({ error: "Failed to delete booking: " + error.message });
+    res.status(500).json({ error: "Failed to delete booking", details: error.message });
   }
 });
 
