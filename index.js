@@ -53,7 +53,7 @@ let isConnected = false;
 app.use(async (req, res, next) => {
   if (!isConnected) {
     try {
-      await client.connect();
+      // await client.connect();
       isConnected = true;
       console.log("✅ Connected to MongoDB");
     } catch (err) {
