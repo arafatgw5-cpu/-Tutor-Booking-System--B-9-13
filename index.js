@@ -47,7 +47,7 @@ const verifyToken = async (req, res, next) => {
 
   try {
     const JWKS = createRemoteJWKSet(new URL('http://localhost:3000/api/auth/jwks'));
-    const { payload } = await jwtVerify(token, JWKS);
+    const { payload } = await jwtVerifyVerify(token, JWKS);
     req.user = payload;
     console.log('Token verified successfully:', payload);
 
@@ -119,7 +119,7 @@ app.get("/", (req, res) => {
 //     TUTORS ROUTES
 // ========================
 
-app.get("/api/tutors", verifyToken, async (req, res) => {
+app.get("/api/tutors", async (req, res) => {
   try {
     const limit = parseInt(req.query.limit) || 0;
     const result = await tutorsCollection.find({}).limit(limit).toArray();
@@ -129,7 +129,7 @@ app.get("/api/tutors", verifyToken, async (req, res) => {
   }
 });
 
-app.get("/api/tutors/:id", verifyToken, async (req, res) => {
+app.get("/api/tutors/:id", async (req, res) => {
   try {
     if (!ObjectId.isValid(req.params.id)) {
       return res.status(400).json({ error: "Invalid ID format" });
@@ -142,7 +142,7 @@ app.get("/api/tutors/:id", verifyToken, async (req, res) => {
   }
 });
 
-app.post("/api/tutors", verifyToken, async (req, res) => {
+app.post("/api/tutors", async (req, res) => {
   try {
     // Basic validation
     if (!req.body || Object.keys(req.body).length === 0) {
@@ -155,7 +155,7 @@ app.post("/api/tutors", verifyToken, async (req, res) => {
   }
 });
 
-app.put("/api/tutors/:id", verifyToken, async (req, res) => {
+app.put("/api/tutors/:id", async (req, res) => {
   try {
     if (!ObjectId.isValid(req.params.id)) {
       return res.status(400).json({ error: "Invalid ID format" });
@@ -178,7 +178,7 @@ app.put("/api/tutors/:id", verifyToken, async (req, res) => {
   }
 });
 
-app.delete("/api/tutors/:id", verifyToken, async (req, res) => {
+app.delete("/api/tutors/:id", async (req, res) => {
   try {
     if (!ObjectId.isValid(req.params.id)) {
       return res.status(400).json({ error: "Invalid ID format" });
@@ -210,7 +210,7 @@ app.get("/api/my-tutors/:email", async (req, res) => {
 //   BOOKINGS ROUTES
 // ========================
 
-app.post("/api/bookings", verifyToken, async (req, res) => {
+app.post("/api/bookings", async (req, res) => {
   try {
     const booking = req.body;
     if (!booking.email || !booking.tutorId) {
@@ -244,7 +244,7 @@ app.get("/api/booked-sessions/:email", async (req, res) => {
   }
 });
 
-app.get("/api/bookings/:id", verifyToken, async (req, res) => {
+app.get("/api/bookings/:id", async (req, res) => {
   try {
     if (!ObjectId.isValid(req.params.id)) {
       return res.status(400).json({ error: "Invalid ID format" });
