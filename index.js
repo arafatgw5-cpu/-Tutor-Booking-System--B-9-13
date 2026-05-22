@@ -3,10 +3,10 @@ const cors = require("cors");
 const dns = require("dns");
 require("dotenv").config();
 const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
-const { createRemoteJWKSet } = require("jose-cjs");
+// 🔴 ঠিক করা হয়েছে: jose-cjs থেকে jwtVerify ইমপোর্ট করা হয়েছে
+const { createRemoteJWKSet, jwtVerify } = require("jose-cjs");
 
 // DNS Fix for specific ISPs blocking MongoDB Atlas
-// (Vercel-এ কখনো কখনো সমস্যা তৈরি করতে পারে, প্রয়োজনে কমেন্ট করে টেস্ট করবেন)
 try {
   dns.setServers(["8.8.8.8", "8.8.4.4"]);
 } catch (error) {
@@ -34,29 +34,31 @@ app.use(
     credentials: true,
   })
 );
-// JWT
+
+// ------------------ JWT Auth Middleware ------------------
 const verifyToken = async (req, res, next) => {
   const { authorization } = req.headers;
-    console.log(req.headers, 'from verify token');
   const token = authorization?.split(' ')[1];
-    console.log(token);
 
   if (!token) {
     return res.status(401).json({ message: 'Unauthorize' });
   }
 
   try {
-    const JWKS = createRemoteJWKSet(new URL('http://localhost:3000/api/auth/jwks'));
+    // 🔴 ঠিক করা হয়েছে: প্রোডাকশনে যেন ক্র্যাশ না করে তাই FRONTEND_URL ডাইনামিক করা হয়েছে
+    const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
+    const JWKS = createRemoteJWKSet(new URL(`${frontendUrl}/api/auth/jwks`));
+    
     const { payload } = await jwtVerify(token, JWKS);
     req.user = payload;
-    console.log('Token verified successfully:', payload);
 
     next();
   } catch (error) {
-    console.error('Token validation failed:', error);
+    console.error('Token validation failed:', error.message);
     return res.status(401).json({ message: 'Unauthorize' });
   }
 };
+
 // ------------------ Body Parsers ------------------
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
@@ -93,7 +95,7 @@ async function connectToDatabase() {
       })
       .catch((err) => {
         console.error("❌ MongoDB Connection Error:", err);
-        clientPromise = null; // reset on failure so next attempt retries
+        clientPromise = null; 
         throw err;
       });
   }
@@ -144,7 +146,6 @@ app.get("/api/tutors/:id", verifyToken, async (req, res) => {
 
 app.post("/api/tutors", verifyToken, async (req, res) => {
   try {
-    // Basic validation
     if (!req.body || Object.keys(req.body).length === 0) {
       return res.status(400).json({ error: "Request body is empty" });
     }
@@ -162,7 +163,7 @@ app.put("/api/tutors/:id", verifyToken, async (req, res) => {
     }
 
     const updateData = { ...req.body };
-    delete updateData._id; // Prevent immutable _id error
+    delete updateData._id; 
 
     if (Object.keys(updateData).length === 0) {
       return res.status(400).json({ error: "No update fields provided" });
@@ -207,7 +208,7 @@ app.get("/api/my-tutors/:email", async (req, res) => {
 });
 
 // ========================
-//   BOOKINGS ROUTES
+//    BOOKINGS ROUTES
 // ========================
 
 app.post("/api/bookings", verifyToken, async (req, res) => {
