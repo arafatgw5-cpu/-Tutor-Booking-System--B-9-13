@@ -5,6 +5,7 @@ require("dotenv").config();
 const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
 
 // DNS Fix for specific ISPs blocking MongoDB Atlas
+// (Vercel-এ কখনো কখনো সমস্যা তৈরি করতে পারে, প্রয়োজনে কমেন্ট করে টেস্ট করবেন)
 try {
   dns.setServers(["8.8.8.8", "8.8.4.4"]);
 } catch (error) {
@@ -14,31 +15,32 @@ try {
 const app = express();
 const port = process.env.PORT || 5000;
 
-// CORS Setup (Handles local dev and production deployment seamlessly)
+// ------------------ CORS ------------------
 const allowedOrigins = [
   "http://localhost:3000",
   "http://localhost:3001",
-  process.env.CLIENT_URL
+  process.env.CLIENT_URL,
 ].filter(Boolean);
 
 app.use(
   cors({
-    origin: allowedOrigins,
+    origin: allowedOrigins.length > 0 ? allowedOrigins : "*", // fallback for dev
     methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
     credentials: true,
   })
 );
 
+// ------------------ Body Parsers ------------------
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-const uri = process.env.MONGO_URI || process.env.MONGODB_URI; // Handles both naming conventions
+// ------------------ MongoDB Setup ------------------
+const uri = process.env.MONGO_URI || process.env.MONGODB_URI;
 if (!uri) {
   console.error("❌ FATAL ERROR: MongoDB connection URI is missing from .env file.");
   process.exit(1);
 }
 
-// Global MongoDB Client Configuration
 const client = new MongoClient(uri, {
   serverApi: {
     version: ServerApiVersion.v1,
@@ -51,20 +53,27 @@ const database = client.db("tutorsFinderDB");
 const tutorsCollection = database.collection("tutors");
 const bookingsCollection = database.collection("bookings");
 
-// 🚀 Database Connection Middleware (Vercel Serverless Safe)
-let isConnected = false;
+// ------------------ Robust Connection Middleware (Serverless-safe) ------------------
+let clientPromise;
+
 async function connectToDatabase() {
-  if (isConnected) return;
-  try {
-    // await client.connect(); // ✨ FIXED: This was commented out in your original code
-    isConnected = true;
-    console.log("✅ Connected perfectly to MongoDB");
-  } catch (err) {
-    console.error("❌ MongoDB Connection Error:", err);
-    throw err;
+  if (!clientPromise) {
+    clientPromise = client
+      .connect()
+      .then(() => {
+        console.log("✅ Connected perfectly to MongoDB");
+        return client;
+      })
+      .catch((err) => {
+        console.error("❌ MongoDB Connection Error:", err);
+        clientPromise = null; // reset on failure so next attempt retries
+        throw err;
+      });
   }
+  await clientPromise;
 }
 
+// Attach DB connection check to every request
 app.use(async (req, res, next) => {
   try {
     await connectToDatabase();
@@ -74,39 +83,13 @@ app.use(async (req, res, next) => {
   }
 });
 
-// ===================================================
-// --- BETTER AUTH SETUP (Uncomment when ready) ---
-// ===================================================
-// const { betterAuth } = require("better-auth");
-// const { mongodbAdapter } = require("better-auth/adapters/mongodb");
-// const { toNodeHandler } = require("better-auth/node");
-//
-// const determineBaseURL = () => process.env.SERVER_URL || `http://localhost:${port}`;
-//
-// const auth = betterAuth({
-//   database: mongodbAdapter(database, { client }),
-//   secret: process.env.BETTER_AUTH_SECRET,
-//   emailAndPassword: { enabled: true },
-//   socialProviders: {
-//     google: {
-//       clientId: process.env.GOOGLE_CLIENT_ID,
-//       clientSecret: process.env.GOOGLE_CLIENT_SECRET,
-//     },
-//   },
-//   trustedOrigins: allowedOrigins,
-//   baseURL: determineBaseURL(),
-// });
-//
-// app.all(/^\/api\/auth(\/.*)?$/, toNodeHandler(auth));
-// ===================================================
-
-// Health Check Route
+// ------------------ Health Check ------------------
 app.get("/", (req, res) => {
   res.send("🚀 Tutors Finder Server Running Perfectly!");
 });
 
 // ========================
-// --- TUTORS ROUTES ---
+//     TUTORS ROUTES
 // ========================
 
 app.get("/api/tutors", async (req, res) => {
@@ -134,6 +117,10 @@ app.get("/api/tutors/:id", async (req, res) => {
 
 app.post("/api/tutors", async (req, res) => {
   try {
+    // Basic validation
+    if (!req.body || Object.keys(req.body).length === 0) {
+      return res.status(400).json({ error: "Request body is empty" });
+    }
     const result = await tutorsCollection.insertOne(req.body);
     res.status(201).json(result);
   } catch (error) {
@@ -146,9 +133,13 @@ app.put("/api/tutors/:id", async (req, res) => {
     if (!ObjectId.isValid(req.params.id)) {
       return res.status(400).json({ error: "Invalid ID format" });
     }
-    
+
     const updateData = { ...req.body };
     delete updateData._id; // Prevent immutable _id error
+
+    if (Object.keys(updateData).length === 0) {
+      return res.status(400).json({ error: "No update fields provided" });
+    }
 
     const result = await tutorsCollection.updateOne(
       { _id: new ObjectId(req.params.id) },
@@ -175,6 +166,9 @@ app.delete("/api/tutors/:id", async (req, res) => {
 app.get("/api/my-tutors/:email", async (req, res) => {
   try {
     const email = decodeURIComponent(req.params.email).trim().toLowerCase();
+    if (!email) {
+      return res.status(400).json({ error: "Email is required" });
+    }
     const result = await tutorsCollection
       .find({ email: { $regex: `^${email}$`, $options: "i" } })
       .sort({ _id: -1 })
@@ -186,7 +180,7 @@ app.get("/api/my-tutors/:email", async (req, res) => {
 });
 
 // ========================
-// --- BOOKINGS ROUTES ---
+//   BOOKINGS ROUTES
 // ========================
 
 app.post("/api/bookings", async (req, res) => {
@@ -210,6 +204,9 @@ app.post("/api/bookings", async (req, res) => {
 app.get("/api/booked-sessions/:email", async (req, res) => {
   try {
     const email = decodeURIComponent(req.params.email).trim().toLowerCase();
+    if (!email) {
+      return res.status(400).json({ error: "Email is required" });
+    }
     const result = await bookingsCollection
       .find({ email: { $regex: `^${email}$`, $options: "i" } })
       .sort({ bookedAt: -1 })
@@ -245,10 +242,16 @@ app.delete("/api/bookings/:id", async (req, res) => {
   }
 });
 
-// Export for Vercel Serverless
+// ------------------ Global Error Handler ------------------
+app.use((err, req, res, next) => {
+  console.error("Unhandled Error:", err.stack);
+  res.status(500).json({ error: "Internal Server Error", details: err.message });
+});
+
+// ------------------ Export for Vercel ------------------
 module.exports = app;
 
-// Run Local Server (Only if not in production/Vercel serverless environment)
+// ------------------ Local Server ------------------
 if (process.env.NODE_ENV !== "production") {
   app.listen(port, () => console.log(`🚀 Server running locally on port ${port}`));
 }
