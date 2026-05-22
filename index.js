@@ -1,16 +1,16 @@
 const express = require("express");
 const cors = require("cors");
-const dns = require("dns");
+// const dns = require("dns");
 require("dotenv").config();
 const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
 
 // DNS Fix for specific ISPs blocking MongoDB Atlas
 // (Vercel-এ কখনো কখনো সমস্যা তৈরি করতে পারে, প্রয়োজনে কমেন্ট করে টেস্ট করবেন)
-try {
-  dns.setServers(["8.8.8.8", "8.8.4.4"]);
-} catch (error) {
-  console.error("⚠️ DNS configuration warning:", error.message);
-}
+// try {
+//   dns.setServers(["8.8.8.8", "8.8.4.4"]);
+// } catch (error) {
+//   console.error("⚠️ DNS configuration warning:", error.message);
+// }
 
 const app = express();
 const port = process.env.PORT || 5000;
