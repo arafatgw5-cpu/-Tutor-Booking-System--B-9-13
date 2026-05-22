@@ -1,16 +1,17 @@
 const express = require("express");
 const cors = require("cors");
-// const dns = require("dns");
+const dns = require("dns");
 require("dotenv").config();
 const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
+const { createRemoteJWKSet } = require("jose-cjs");
 
 // DNS Fix for specific ISPs blocking MongoDB Atlas
 // (Vercel-এ কখনো কখনো সমস্যা তৈরি করতে পারে, প্রয়োজনে কমেন্ট করে টেস্ট করবেন)
-// try {
-//   dns.setServers(["8.8.8.8", "8.8.4.4"]);
-// } catch (error) {
-//   console.error("⚠️ DNS configuration warning:", error.message);
-// }
+try {
+  dns.setServers(["8.8.8.8", "8.8.4.4"]);
+} catch (error) {
+  console.error("⚠️ DNS configuration warning:", error.message);
+}
 
 const app = express();
 const port = process.env.PORT || 5000;
@@ -33,7 +34,29 @@ app.use(
     credentials: true,
   })
 );
+// JWT
+const verifyToken = async (req, res, next) => {
+  const { authorization } = req.headers;
+    console.log(req.headers, 'from verify token');
+  const token = authorization?.split(' ')[1];
+    console.log(token);
 
+  if (!token) {
+    return res.status(401).json({ message: 'Unauthorize' });
+  }
+
+  try {
+    const JWKS = createRemoteJWKSet(new URL('http://localhost:3000/api/auth/jwks'));
+    const { payload } = await jwtVerify(token, JWKS);
+    req.user = payload;
+    console.log('Token verified successfully:', payload);
+
+    next();
+  } catch (error) {
+    console.error('Token validation failed:', error);
+    return res.status(401).json({ message: 'Unauthorize' });
+  }
+};
 // ------------------ Body Parsers ------------------
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
@@ -96,7 +119,7 @@ app.get("/", (req, res) => {
 //     TUTORS ROUTES
 // ========================
 
-app.get("/api/tutors", async (req, res) => {
+app.get("/api/tutors", verifyToken, async (req, res) => {
   try {
     const limit = parseInt(req.query.limit) || 0;
     const result = await tutorsCollection.find({}).limit(limit).toArray();
@@ -106,7 +129,7 @@ app.get("/api/tutors", async (req, res) => {
   }
 });
 
-app.get("/api/tutors/:id", async (req, res) => {
+app.get("/api/tutors/:id", verifyToken, async (req, res) => {
   try {
     if (!ObjectId.isValid(req.params.id)) {
       return res.status(400).json({ error: "Invalid ID format" });
@@ -119,7 +142,7 @@ app.get("/api/tutors/:id", async (req, res) => {
   }
 });
 
-app.post("/api/tutors", async (req, res) => {
+app.post("/api/tutors", verifyToken, async (req, res) => {
   try {
     // Basic validation
     if (!req.body || Object.keys(req.body).length === 0) {
@@ -132,7 +155,7 @@ app.post("/api/tutors", async (req, res) => {
   }
 });
 
-app.put("/api/tutors/:id", async (req, res) => {
+app.put("/api/tutors/:id", verifyToken, async (req, res) => {
   try {
     if (!ObjectId.isValid(req.params.id)) {
       return res.status(400).json({ error: "Invalid ID format" });
@@ -155,7 +178,7 @@ app.put("/api/tutors/:id", async (req, res) => {
   }
 });
 
-app.delete("/api/tutors/:id", async (req, res) => {
+app.delete("/api/tutors/:id", verifyToken, async (req, res) => {
   try {
     if (!ObjectId.isValid(req.params.id)) {
       return res.status(400).json({ error: "Invalid ID format" });
@@ -187,7 +210,7 @@ app.get("/api/my-tutors/:email", async (req, res) => {
 //   BOOKINGS ROUTES
 // ========================
 
-app.post("/api/bookings", async (req, res) => {
+app.post("/api/bookings", verifyToken, async (req, res) => {
   try {
     const booking = req.body;
     if (!booking.email || !booking.tutorId) {
@@ -221,7 +244,7 @@ app.get("/api/booked-sessions/:email", async (req, res) => {
   }
 });
 
-app.get("/api/bookings/:id", async (req, res) => {
+app.get("/api/bookings/:id", verifyToken, async (req, res) => {
   try {
     if (!ObjectId.isValid(req.params.id)) {
       return res.status(400).json({ error: "Invalid ID format" });
