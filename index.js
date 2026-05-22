@@ -17,15 +17,19 @@ const port = process.env.PORT || 5000;
 
 // ------------------ CORS ------------------
 const allowedOrigins = [
-  "http://localhost:3000",
-  "http://localhost:3001",
-  process.env.CLIENT_URL,
-].filter(Boolean);
+  'http://localhost:3000',
+  "https://tutor-booking-system-psi.vercel.app"
+];
 
 app.use(
   cors({
-    origin: allowedOrigins.length > 0 ? allowedOrigins : "*", // fallback for dev
-    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
+    origin: (origin, callback) => {
+      if (!origin || allowedOrigins.includes(origin)) {
+        callback(null, true);
+      } else {
+        callback(new Error('Not allowed by CORS'));
+      }
+    },
     credentials: true,
   })
 );
