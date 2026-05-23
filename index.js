@@ -46,7 +46,7 @@ const verifyToken = async (req, res, next) => {
   }
 
   try {
-    const JWKS = createRemoteJWKSet(new URL('http://localhost:3000/api/auth/jwks'));
+    const JWKS = createRemoteJWKSet(new URL('https://tutor-booking-system-psi.vercel.app/api/auth/jwks'));
     const { payload } = await jwtVerifyVerify(token, JWKS);
     req.user = payload;
     console.log('Token verified successfully:', payload);
