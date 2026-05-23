@@ -6,7 +6,7 @@ const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
 const { createRemoteJWKSet, jwtVerify } = require("jose-cjs");
 
 // DNS Fix for specific ISPs blocking MongoDB Atlas
-// (Vercel-এ কখনো কখনো সমস্যা তৈরি করতে পারে, প্রয়োজনে কমেন্ট করে টেস্ট করবেন)
+// (Vercel-এ কখনো কখনো সমস্যা তৈরি করতে পারে, প্রয়োজনে কমেন্ট করে টেস্ট করবেন)
 try {
   dns.setServers(["8.8.8.8", "8.8.4.4"]);
 } catch (error) {
@@ -34,29 +34,30 @@ app.use(
     credentials: true,
   })
 );
-// JWT
+
+// ------------------ JWT Setup ------------------
+// ✅ JWKS গ্লোবালি ডিক্লেয়ার করা হলো (যাতে প্রতিবার এপিআই কলে নেটওয়ার্ক রিকোয়েস্ট না হয়)
+const JWKS = createRemoteJWKSet(new URL('https://tutor-booking-system-psi.vercel.app/api/auth/jwks'));
+
 const verifyToken = async (req, res, next) => {
   const { authorization } = req.headers;
-    console.log(req.headers, 'from verify token');
   const token = authorization?.split(' ')[1];
-    console.log(token);
 
   if (!token) {
-    return res.status(401).json({ message: 'Unauthorize' });
+    return res.status(401).json({ message: 'Unauthorized access: No token provided' });
   }
 
   try {
-    const JWKS = createRemoteJWKSet(new URL('https://tutor-booking-system-psi.vercel.app/api/auth/jwks'));
-    const { payload } = await jwtVerifyVerify(token, JWKS);
+    // ✅ typo ঠিক করা হয়েছে: jwtVerifyVerify -> jwtVerify
+    const { payload } = await jwtVerify(token, JWKS);
     req.user = payload;
-    console.log('Token verified successfully:', payload);
-
     next();
   } catch (error) {
-    console.error('Token validation failed:', error);
-    return res.status(401).json({ message: 'Unauthorize' });
+    console.error('Token validation failed:', error.message);
+    return res.status(401).json({ message: 'Unauthorized access: Invalid token' });
   }
 };
+
 // ------------------ Body Parsers ------------------
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
@@ -119,7 +120,8 @@ app.get("/", (req, res) => {
 //     TUTORS ROUTES
 // ========================
 
-app.get("/api/tutors", verifyToken, async (req, res) => {
+// 🔓 Public Route: সব ইউজার দেখতে পারবে
+app.get("/api/tutors", async (req, res) => {
   try {
     const limit = parseInt(req.query.limit) || 0;
     const result = await tutorsCollection.find({}).limit(limit).toArray();
@@ -129,7 +131,8 @@ app.get("/api/tutors", verifyToken, async (req, res) => {
   }
 });
 
-app.get("/api/tutors/:id",verifyToken, async (req, res) => {
+// 🔓 Public Route: সব ইউজার টিউটরের ডিটেইলস দেখতে পারবে
+app.get("/api/tutors/:id", async (req, res) => {
   try {
     if (!ObjectId.isValid(req.params.id)) {
       return res.status(400).json({ error: "Invalid ID format" });
@@ -142,9 +145,9 @@ app.get("/api/tutors/:id",verifyToken, async (req, res) => {
   }
 });
 
-app.post("/api/tutors", async (req, res) => {
+// 🔒 Protected Route: শুধু লগইন করা ইউজার টিউটর অ্যাড করতে পারবে
+app.post("/api/tutors", verifyToken, async (req, res) => {
   try {
-    // Basic validation
     if (!req.body || Object.keys(req.body).length === 0) {
       return res.status(400).json({ error: "Request body is empty" });
     }
@@ -155,7 +158,8 @@ app.post("/api/tutors", async (req, res) => {
   }
 });
 
-app.put("/api/tutors/:id", async (req, res) => {
+// 🔒 Protected Route: শুধু লগইন করা ইউজার আপডেট করতে পারবে
+app.put("/api/tutors/:id", verifyToken, async (req, res) => {
   try {
     if (!ObjectId.isValid(req.params.id)) {
       return res.status(400).json({ error: "Invalid ID format" });
@@ -178,7 +182,8 @@ app.put("/api/tutors/:id", async (req, res) => {
   }
 });
 
-app.delete("/api/tutors/:id", async (req, res) => {
+// 🔒 Protected Route: শুধু লগইন করা ইউজার ডিলিট করতে পারবে
+app.delete("/api/tutors/:id", verifyToken, async (req, res) => {
   try {
     if (!ObjectId.isValid(req.params.id)) {
       return res.status(400).json({ error: "Invalid ID format" });
@@ -190,7 +195,8 @@ app.delete("/api/tutors/:id", async (req, res) => {
   }
 });
 
-app.get("/api/my-tutors/:email", async (req, res) => {
+// 🔒 Protected Route: ইউজার শুধু তার নিজের অ্যাড করা টিউটরগুলো দেখতে পারবে
+app.get("/api/my-tutors/:email", verifyToken, async (req, res) => {
   try {
     const email = decodeURIComponent(req.params.email).trim().toLowerCase();
     if (!email) {
@@ -210,7 +216,8 @@ app.get("/api/my-tutors/:email", async (req, res) => {
 //   BOOKINGS ROUTES
 // ========================
 
-app.post("/api/bookings", async (req, res) => {
+// 🔒 Protected Route: বুকিং শুধু লগইন করা ইউজার করতে পারবে
+app.post("/api/bookings", verifyToken, async (req, res) => {
   try {
     const booking = req.body;
     if (!booking.email || !booking.tutorId) {
@@ -228,7 +235,8 @@ app.post("/api/bookings", async (req, res) => {
   }
 });
 
-app.get("/api/booked-sessions/:email", async (req, res) => {
+// 🔒 Protected Route: নিজের বুক করা সেশনগুলো দেখতে পারবে
+app.get("/api/booked-sessions/:email", verifyToken, async (req, res) => {
   try {
     const email = decodeURIComponent(req.params.email).trim().toLowerCase();
     if (!email) {
@@ -244,7 +252,8 @@ app.get("/api/booked-sessions/:email", async (req, res) => {
   }
 });
 
-app.get("/api/bookings/:id", async (req, res) => {
+// 🔒 Protected Route
+app.get("/api/bookings/:id", verifyToken, async (req, res) => {
   try {
     if (!ObjectId.isValid(req.params.id)) {
       return res.status(400).json({ error: "Invalid ID format" });
@@ -257,7 +266,8 @@ app.get("/api/bookings/:id", async (req, res) => {
   }
 });
 
-app.delete("/api/bookings/:id", async (req, res) => {
+// 🔒 Protected Route
+app.delete("/api/bookings/:id", verifyToken, async (req, res) => {
   try {
     if (!ObjectId.isValid(req.params.id)) {
       return res.status(400).json({ error: "Invalid ID format" });
