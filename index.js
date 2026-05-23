@@ -142,7 +142,7 @@ app.get("/api/tutors/:id",verifyToken, async (req, res) => {
   }
 });
 
-app.post("/api/tutors", verifyToken, async (req, res) => {
+app.post("/api/tutors", async (req, res) => {
   try {
     // Basic validation
     if (!req.body || Object.keys(req.body).length === 0) {
