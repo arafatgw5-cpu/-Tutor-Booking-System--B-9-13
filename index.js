@@ -6,7 +6,6 @@ const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
 const { createRemoteJWKSet, jwtVerify } = require("jose-cjs");
 
 // DNS Fix for specific ISPs blocking MongoDB Atlas
-// (Vercel-এ কখনো কখনো সমস্যা তৈরি করতে পারে, প্রয়োজনে কমেন্ট করে টেস্ট করবেন)
 try {
   dns.setServers(["8.8.8.8", "8.8.4.4"]);
 } catch (error) {
@@ -35,20 +34,23 @@ app.use(
   })
 );
 
+// ------------------ Body Parsers ------------------
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+
 // ------------------ JWT Setup ------------------
-// ✅ JWKS গ্লোবালি ডিক্লেয়ার করা হলো (যাতে প্রতিবার এপিআই কলে নেটওয়ার্ক রিকোয়েস্ট না হয়)
 const JWKS = createRemoteJWKSet(new URL('https://tutor-booking-system-psi.vercel.app/api/auth/jwks'));
 
 const verifyToken = async (req, res, next) => {
   const { authorization } = req.headers;
-  const token = authorization?.split(' ')[1];
-
-  if (!token) {
+  
+  if (!authorization) {
     return res.status(401).json({ message: 'Unauthorized access: No token provided' });
   }
 
+  const token = authorization.split(' ')[1];
+
   try {
-    // ✅ typo ঠিক করা হয়েছে: jwtVerifyVerify -> jwtVerify
     const { payload } = await jwtVerify(token, JWKS);
     req.user = payload;
     next();
@@ -57,10 +59,6 @@ const verifyToken = async (req, res, next) => {
     return res.status(401).json({ message: 'Unauthorized access: Invalid token' });
   }
 };
-
-// ------------------ Body Parsers ------------------
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
 
 // ------------------ MongoDB Setup ------------------
 const uri = process.env.MONGO_URI || process.env.MONGODB_URI;
@@ -81,7 +79,6 @@ const database = client.db("tutorsFinderDB");
 const tutorsCollection = database.collection("tutors");
 const bookingsCollection = database.collection("bookings");
 
-// ------------------ Robust Connection Middleware (Serverless-safe) ------------------
 let clientPromise;
 
 async function connectToDatabase() {
@@ -94,14 +91,13 @@ async function connectToDatabase() {
       })
       .catch((err) => {
         console.error("❌ MongoDB Connection Error:", err);
-        clientPromise = null; // reset on failure so next attempt retries
+        clientPromise = null; 
         throw err;
       });
   }
   await clientPromise;
 }
 
-// Attach DB connection check to every request
 app.use(async (req, res, next) => {
   try {
     await connectToDatabase();
@@ -117,10 +113,9 @@ app.get("/", (req, res) => {
 });
 
 // ========================
-//     TUTORS ROUTES
+//    TUTORS ROUTES
 // ========================
 
-// 🔓 Public Route: সব ইউজার দেখতে পারবে
 app.get("/api/tutors", async (req, res) => {
   try {
     const limit = parseInt(req.query.limit) || 0;
@@ -131,7 +126,6 @@ app.get("/api/tutors", async (req, res) => {
   }
 });
 
-// 🔓 Public Route: সব ইউজার টিউটরের ডিটেইলস দেখতে পারবে
 app.get("/api/tutors/:id", async (req, res) => {
   try {
     if (!ObjectId.isValid(req.params.id)) {
@@ -145,7 +139,6 @@ app.get("/api/tutors/:id", async (req, res) => {
   }
 });
 
-// 🔒 Protected Route: শুধু লগইন করা ইউজার টিউটর অ্যাড করতে পারবে
 app.post("/api/tutors", verifyToken, async (req, res) => {
   try {
     if (!req.body || Object.keys(req.body).length === 0) {
@@ -158,7 +151,6 @@ app.post("/api/tutors", verifyToken, async (req, res) => {
   }
 });
 
-// 🔒 Protected Route: শুধু লগইন করা ইউজার আপডেট করতে পারবে
 app.put("/api/tutors/:id", verifyToken, async (req, res) => {
   try {
     if (!ObjectId.isValid(req.params.id)) {
@@ -166,7 +158,7 @@ app.put("/api/tutors/:id", verifyToken, async (req, res) => {
     }
 
     const updateData = { ...req.body };
-    delete updateData._id; // Prevent immutable _id error
+    delete updateData._id;
 
     if (Object.keys(updateData).length === 0) {
       return res.status(400).json({ error: "No update fields provided" });
@@ -182,7 +174,6 @@ app.put("/api/tutors/:id", verifyToken, async (req, res) => {
   }
 });
 
-// 🔒 Protected Route: শুধু লগইন করা ইউজার ডিলিট করতে পারবে
 app.delete("/api/tutors/:id", verifyToken, async (req, res) => {
   try {
     if (!ObjectId.isValid(req.params.id)) {
@@ -195,7 +186,6 @@ app.delete("/api/tutors/:id", verifyToken, async (req, res) => {
   }
 });
 
-// 🔒 Protected Route: ইউজার শুধু তার নিজের অ্যাড করা টিউটরগুলো দেখতে পারবে
 app.get("/api/my-tutors/:email", verifyToken, async (req, res) => {
   try {
     const email = decodeURIComponent(req.params.email).trim().toLowerCase();
@@ -216,7 +206,6 @@ app.get("/api/my-tutors/:email", verifyToken, async (req, res) => {
 //   BOOKINGS ROUTES
 // ========================
 
-// 🔒 Protected Route: বুকিং শুধু লগইন করা ইউজার করতে পারবে
 app.post("/api/bookings", verifyToken, async (req, res) => {
   try {
     const booking = req.body;
@@ -235,7 +224,6 @@ app.post("/api/bookings", verifyToken, async (req, res) => {
   }
 });
 
-// 🔒 Protected Route: নিজের বুক করা সেশনগুলো দেখতে পারবে
 app.get("/api/booked-sessions/:email", verifyToken, async (req, res) => {
   try {
     const email = decodeURIComponent(req.params.email).trim().toLowerCase();
@@ -252,7 +240,6 @@ app.get("/api/booked-sessions/:email", verifyToken, async (req, res) => {
   }
 });
 
-// 🔒 Protected Route
 app.get("/api/bookings/:id", verifyToken, async (req, res) => {
   try {
     if (!ObjectId.isValid(req.params.id)) {
@@ -266,7 +253,6 @@ app.get("/api/bookings/:id", verifyToken, async (req, res) => {
   }
 });
 
-// 🔒 Protected Route
 app.delete("/api/bookings/:id", verifyToken, async (req, res) => {
   try {
     if (!ObjectId.isValid(req.params.id)) {
@@ -285,10 +271,8 @@ app.use((err, req, res, next) => {
   res.status(500).json({ error: "Internal Server Error", details: err.message });
 });
 
-// ------------------ Export for Vercel ------------------
 module.exports = app;
 
-// ------------------ Local Server ------------------
 if (process.env.NODE_ENV !== "production") {
   app.listen(port, () => console.log(`🚀 Server running locally on port ${port}`));
 }
